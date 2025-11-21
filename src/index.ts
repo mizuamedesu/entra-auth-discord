@@ -31,7 +31,7 @@ export default {
 		const path = url.pathname;
 
 		const corsHeaders = {
-			'Access-Control-Allow-Origin': '*',
+			'Access-Control-Allow-Origin': 'https://chaoslt-auth.mizuame.app',
 			'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
 			'Access-Control-Allow-Headers': 'Content-Type',
 		};
@@ -92,6 +92,10 @@ async function handleRegistration(request: Request, env: Env, corsHeaders: Recor
 
 		const redirectUri = new URL('/callback', request.url).toString();
 		const state = crypto.randomUUID();
+
+		await env.INVITES.put(`state:${state}`, email, {
+			expirationTtl: 60 * 10, // 10 minutes
+		});
 
 		const authUrl = new URL(`https://login.microsoftonline.com/${env.TENANT_ID}/oauth2/v2.0/authorize`);
 		authUrl.searchParams.set('client_id', env.CLIENT_ID);
@@ -179,6 +183,7 @@ async function inviteGuestUser(email: string, env: Env, accessToken: string, bas
 async function handleCallback(request: Request, env: Env): Promise<Response> {
 	const url = new URL(request.url);
 	const code = url.searchParams.get('code');
+	const state = url.searchParams.get('state');
 	const error = url.searchParams.get('error');
 	const errorDescription = url.searchParams.get('error_description');
 
@@ -190,16 +195,34 @@ async function handleCallback(request: Request, env: Env): Promise<Response> {
 		return createErrorPage('認証エラー', '認証コードが見つかりません');
 	}
 
+	if (!state) {
+		return createErrorPage('認証エラー', 'セキュリティトークンが見つかりません');
+	}
+
+	const storedEmail = await env.INVITES.get(`state:${state}`);
+	if (!storedEmail) {
+		return createErrorPage('認証エラー', 'セキュリティトークンが無効または期限切れです');
+	}
+
+	await env.INVITES.delete(`state:${state}`);
+
 	try {
 		const redirectUri = new URL('/callback', request.url).toString();
 		const tokenResponse = await exchangeCodeForToken(code, redirectUri, env);
 
-		const userInfo = await getUserInfo(tokenResponse.id_token);
+		const userInfo = await getUserInfo(tokenResponse.id_token, env);
 
 		if (!userInfo.email || !userInfo.email.endsWith(`@${env.ALLOWED_DOMAIN}`)) {
 			return createErrorPage(
 				'アクセス拒否',
 				`このサービスは @${env.ALLOWED_DOMAIN} のメールアドレスのみ利用可能です`
+			);
+		}
+
+		if (userInfo.email.toLowerCase() !== storedEmail.toLowerCase()) {
+			return createErrorPage(
+				'認証エラー',
+				'登録したメールアドレスと異なるアカウントでログインしています'
 			);
 		}
 
@@ -248,8 +271,7 @@ async function exchangeCodeForToken(code: string, redirectUri: string, env: Env)
 }
 
 
-async function getUserInfo(idToken: string): Promise<UserInfo> {
-
+async function getUserInfo(idToken: string, env: Env): Promise<UserInfo> {
 	const parts = idToken.split('.');
 	if (parts.length !== 3) {
 		throw new Error('Invalid ID token format');
@@ -267,6 +289,24 @@ async function getUserInfo(idToken: string): Promise<UserInfo> {
 	const decodedPayload = decoder.decode(bytes);
 
 	const claims = JSON.parse(decodedPayload);
+
+	const expectedIssuer = `https://login.microsoftonline.com/${env.TENANT_ID}/v2.0`;
+	if (claims.iss !== expectedIssuer) {
+		throw new Error(`Invalid token issuer: expected ${expectedIssuer}, got ${claims.iss}`);
+	}
+
+	if (claims.aud !== env.CLIENT_ID) {
+		throw new Error(`Invalid token audience: expected ${env.CLIENT_ID}, got ${claims.aud}`);
+	}
+
+	const now = Math.floor(Date.now() / 1000);
+	if (claims.exp && claims.exp < now) {
+		throw new Error('Token has expired');
+	}
+
+	if (claims.nbf && claims.nbf > now) {
+		throw new Error('Token not yet valid');
+	}
 
 	return {
 		email: claims.email || claims.preferred_username || claims.upn,
