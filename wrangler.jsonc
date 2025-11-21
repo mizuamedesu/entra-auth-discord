@@ -17,7 +17,14 @@
 	"vars": {
 		"TENANT_ID": "298c9c08-6693-49c5-8345-22e226196f7d",
 		"ALLOWED_DOMAIN": "u.tsukuba.ac.jp"
-	}
+	},
+	"kv_namespaces": [
+		{
+			"binding": "INVITES",
+			"id": "fcb7cb23e9934c30a2f79ec933039dde",
+			"preview_id": "687010fe655d4f919c0c9982e416bd5b"
+		}
+	],
 	/**
 	 * Note: Use secrets to store sensitive data.
 	 * Set the following secrets using: wrangler secret put <NAME>

@@ -1,4 +1,5 @@
 import { renderHomePage, renderSuccessPage, renderErrorPage } from './lib/templates';
+import { saveInviteRecord } from './lib/storage';
 
 interface Env {
 	TENANT_ID: string;
@@ -7,6 +8,7 @@ interface Env {
 	ALLOWED_DOMAIN: string;
 	DISCORD_BOT_TOKEN: string;
 	DISCORD_CHANNEL_ID: string;
+	INVITES: KVNamespace;
 }
 
 interface TokenResponse {
@@ -202,6 +204,13 @@ async function handleCallback(request: Request, env: Env): Promise<Response> {
 		}
 
 		const inviteUrl = await createDiscordInvite(env);
+
+		await saveInviteRecord(
+			env.INVITES,
+			userInfo.email,
+			userInfo.name || userInfo.email,
+			inviteUrl
+		);
 
 		return createSuccessPage(userInfo.name || userInfo.email, inviteUrl);
 	} catch (error) {
