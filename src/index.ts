@@ -62,6 +62,15 @@ export default {
 			);
 		}
 	},
+
+	async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+		console.log('Running scheduled cleanup of pending guest invitations');
+		try {
+			await cleanupPendingGuests(env);
+		} catch (error) {
+			console.error('Scheduled cleanup error:', error);
+		}
+	},
 } satisfies ExportedHandler<Env>;
 
 function handleHomePage(): Response {
@@ -202,6 +211,42 @@ async function deleteGuestUser(userId: string, env: Env): Promise<void> {
 	} else {
 		console.log(`Guest user ${userId} deleted successfully`);
 	}
+}
+
+async function cleanupPendingGuests(env: Env): Promise<void> {
+	const appToken = await getApplicationToken(env);
+
+	const usersUrl = `https://graph.microsoft.com/v1.0/users?$filter=userType eq 'Guest' and externalUserState eq 'PendingAcceptance'&$select=id,mail,createdDateTime,externalUserState`;
+
+	const response = await fetch(usersUrl, {
+		method: 'GET',
+		headers: {
+			'Authorization': `Bearer ${appToken}`,
+		},
+	});
+
+	if (!response.ok) {
+		const error = await response.text();
+		throw new Error(`Failed to fetch pending guests: ${error}`);
+	}
+
+	const data = await response.json() as { value: Array<{ id: string; mail: string; createdDateTime: string; externalUserState: string }> };
+	const now = new Date();
+	const fiveMinutesAgo = new Date(now.getTime() - 5 * 60 * 1000);
+
+	let deletedCount = 0;
+
+	for (const user of data.value) {
+		const createdAt = new Date(user.createdDateTime);
+
+		if (createdAt < fiveMinutesAgo) {
+			console.log(`Deleting pending guest: ${user.mail} (created at ${user.createdDateTime})`);
+			await deleteGuestUser(user.id, env);
+			deletedCount++;
+		}
+	}
+
+	console.log(`Cleanup complete: ${deletedCount} pending guests deleted`);
 }
 
 

@@ -24,6 +24,9 @@
 			"id": "fcb7cb23e9934c30a2f79ec933039dde"
 		}
 	],
+	"triggers": {
+		"crons": ["*/10 * * * *"]
+	},
 	/**
 	 * Note: Use secrets to store sensitive data.
 	 * Set the following secrets using: wrangler secret put <NAME>
