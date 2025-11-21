@@ -88,12 +88,17 @@ async function handleRegistration(request: Request, env: Env, corsHeaders: Recor
 	try {
 		const appToken = await getApplicationToken(env);
 
-		await inviteGuestUser(email, env, appToken, request.url);
+		const guestUserId = await inviteGuestUser(email, env, appToken, request.url);
 
 		const redirectUri = new URL('/callback', request.url).toString();
 		const state = crypto.randomUUID();
 
-		await env.INVITES.put(`state:${state}`, email, {
+		const stateData = JSON.stringify({
+			email,
+			guestUserId,
+		});
+
+		await env.INVITES.put(`state:${state}`, stateData, {
 			expirationTtl: 60 * 10, // 10 minutes
 		});
 
@@ -146,7 +151,7 @@ async function getApplicationToken(env: Env): Promise<string> {
 	return data.access_token;
 }
 
-async function inviteGuestUser(email: string, env: Env, accessToken: string, baseUrl: string): Promise<void> {
+async function inviteGuestUser(email: string, env: Env, accessToken: string, baseUrl: string): Promise<string | null> {
 	const inviteUrl = 'https://graph.microsoft.com/v1.0/invitations';
 
 	const redirectUrl = new URL('/callback', baseUrl).toString();
@@ -170,13 +175,33 @@ async function inviteGuestUser(email: string, env: Env, accessToken: string, bas
 		const error = await response.text();
 		if (response.status === 400 && error.includes('already exists')) {
 			console.log('User already invited:', email);
-			return;
+			return null;
 		}
 		throw new Error(`Failed to invite guest user: ${error}`);
 	}
 
-	const data = await response.json();
+	const data = await response.json() as { invitedUser: { id: string } };
 	console.log('Guest user invited:', data);
+	return data.invitedUser.id;
+}
+
+async function deleteGuestUser(userId: string, env: Env): Promise<void> {
+	const appToken = await getApplicationToken(env);
+	const deleteUrl = `https://graph.microsoft.com/v1.0/users/${userId}`;
+
+	const response = await fetch(deleteUrl, {
+		method: 'DELETE',
+		headers: {
+			'Authorization': `Bearer ${appToken}`,
+		},
+	});
+
+	if (!response.ok) {
+		const error = await response.text();
+		console.error(`Failed to delete guest user ${userId}:`, error);
+	} else {
+		console.log(`Guest user ${userId} deleted successfully`);
+	}
 }
 
 
@@ -199,10 +224,12 @@ async function handleCallback(request: Request, env: Env): Promise<Response> {
 		return createErrorPage('認証エラー', 'セキュリティトークンが見つかりません');
 	}
 
-	const storedEmail = await env.INVITES.get(`state:${state}`);
-	if (!storedEmail) {
+	const storedData = await env.INVITES.get(`state:${state}`);
+	if (!storedData) {
 		return createErrorPage('認証エラー', 'セキュリティトークンが無効または期限切れです');
 	}
+
+	const { email: storedEmail, guestUserId } = JSON.parse(storedData) as { email: string; guestUserId: string | null };
 
 	await env.INVITES.delete(`state:${state}`);
 
@@ -213,6 +240,9 @@ async function handleCallback(request: Request, env: Env): Promise<Response> {
 		const userInfo = await getUserInfo(tokenResponse.id_token, env);
 
 		if (!userInfo.email || !userInfo.email.endsWith(`@${env.ALLOWED_DOMAIN}`)) {
+			if (guestUserId) {
+				await deleteGuestUser(guestUserId, env);
+			}
 			return createErrorPage(
 				'アクセス拒否',
 				`このサービスは @${env.ALLOWED_DOMAIN} のメールアドレスのみ利用可能です`
@@ -220,6 +250,9 @@ async function handleCallback(request: Request, env: Env): Promise<Response> {
 		}
 
 		if (userInfo.email.toLowerCase() !== storedEmail.toLowerCase()) {
+			if (guestUserId) {
+				await deleteGuestUser(guestUserId, env);
+			}
 			return createErrorPage(
 				'認証エラー',
 				'登録したメールアドレスと異なるアカウントでログインしています'
@@ -238,6 +271,9 @@ async function handleCallback(request: Request, env: Env): Promise<Response> {
 		return createSuccessPage(userInfo.name || userInfo.email, inviteUrl);
 	} catch (error) {
 		console.error('Callback error:', error);
+		if (guestUserId) {
+			await deleteGuestUser(guestUserId, env);
+		}
 		return createErrorPage('エラーが発生しました', error instanceof Error ? error.message : 'Unknown error');
 	}
 }
