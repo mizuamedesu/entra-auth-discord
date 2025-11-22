@@ -95,21 +95,8 @@ async function handleRegistration(request: Request, env: Env, corsHeaders: Recor
 	}
 
 	try {
-		const appToken = await getApplicationToken(env);
-
-		const guestUserId = await inviteGuestUser(email, env, appToken, request.url);
-
 		const redirectUri = new URL('/callback', request.url).toString();
 		const state = crypto.randomUUID();
-
-		const stateData = JSON.stringify({
-			email,
-			guestUserId,
-		});
-
-		await env.INVITES.put(`state:${state}`, stateData, {
-			expirationTtl: 60 * 10, // 10 minutes
-		});
 
 		const authUrl = new URL(`https://login.microsoftonline.com/${env.TENANT_ID}/oauth2/v2.0/authorize`);
 		authUrl.searchParams.set('client_id', env.CLIENT_ID);
@@ -120,8 +107,22 @@ async function handleRegistration(request: Request, env: Env, corsHeaders: Recor
 		authUrl.searchParams.set('state', state);
 		authUrl.searchParams.set('login_hint', email);
 
+		const appToken = await getApplicationToken(env);
+		const { userId: guestUserId, redeemUrl } = await inviteGuestUser(email, appToken, authUrl.toString());
+
+		const stateData = JSON.stringify({
+			email,
+			guestUserId,
+		});
+
+		await env.INVITES.put(`state:${state}`, stateData, {
+			expirationTtl: 60 * 10, // 10 minutes
+		});
+
+		const finalUrl = redeemUrl || authUrl.toString();
+
 		return new Response(
-			JSON.stringify({ authUrl: authUrl.toString() }),
+			JSON.stringify({ authUrl: finalUrl }),
 			{ status: 200, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
 		);
 	} catch (error) {
@@ -160,14 +161,12 @@ async function getApplicationToken(env: Env): Promise<string> {
 	return data.access_token;
 }
 
-async function inviteGuestUser(email: string, env: Env, accessToken: string, baseUrl: string): Promise<string | null> {
+async function inviteGuestUser(email: string, accessToken: string, authUrl: string): Promise<{ userId: string | null; redeemUrl: string | null }> {
 	const inviteUrl = 'https://graph.microsoft.com/v1.0/invitations';
-
-	const redirectUrl = new URL('/callback', baseUrl).toString();
 
 	const inviteBody = {
 		invitedUserEmailAddress: email,
-		inviteRedirectUrl: redirectUrl,
+		inviteRedirectUrl: authUrl,
 		sendInvitationMessage: false,
 	};
 
@@ -184,14 +183,14 @@ async function inviteGuestUser(email: string, env: Env, accessToken: string, bas
 		const error = await response.text();
 		if (response.status === 400 && error.includes('already exists')) {
 			console.log('User already invited:', email);
-			return null;
+			return { userId: null, redeemUrl: null };
 		}
 		throw new Error(`Failed to invite guest user: ${error}`);
 	}
 
-	const data = await response.json() as { invitedUser: { id: string } };
+	const data = await response.json() as { invitedUser: { id: string }; inviteRedeemUrl: string };
 	console.log('Guest user invited:', data);
-	return data.invitedUser.id;
+	return { userId: data.invitedUser.id, redeemUrl: data.inviteRedeemUrl };
 }
 
 async function deleteGuestUser(userId: string, env: Env): Promise<void> {
