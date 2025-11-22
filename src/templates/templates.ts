@@ -149,7 +149,7 @@ export const homeTemplate = `<!DOCTYPE html>
 			<ul style="margin-top: 8px; margin-left: 20px;">
 				<li>筑波大学のメールアドレス (@u.tsukuba.ac.jp) のみ有効</li>
 				<li>Microsoft アカウントでの認証が必要です</li>
-				<li>招待リンクは5分間・1回のみ有効</li>
+				<li>Entra IDで外部のorgにゲスト招待を行い、uアドでフィルタリングしています。詳しくは以下のリポジトリをご覧下さい。https://github.com/mizuamedesu/entra-auth-discord</li>
 			</ul>
 		</div>
 	</div>
@@ -294,6 +294,7 @@ export const successTemplate = `<!DOCTYPE html>
 			<strong>重要</strong><br>
 			この招待リンクは<strong>5分間</strong>のみ有効で、<strong>1回</strong>しか使用できません。<br>
 			すぐにサーバーへの参加を完了してください。
+			念の為KVに招待URLの発行ログを保持しています。
 		</div>
 	</div>
 </body>
