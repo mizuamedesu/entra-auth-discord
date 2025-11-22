@@ -121,7 +121,7 @@ export const homeTemplate = `<!DOCTYPE html>
 </head>
 <body>
 	<div class="container">
-		<h1>Discord サーバー招待</h1>
+		<h1>ChaosLT Discord サーバー招待</h1>
 		<p class="subtitle">筑波大学のメールアドレスで認証してください</p>
 
 		<form id="registerForm">
